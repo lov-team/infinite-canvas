@@ -2,6 +2,7 @@ import { registerNodeDefinitions, unregisterPluginNodes } from "@/lib/canvas/nod
 import { getPluginRuntime } from "@/lib/canvas/plugin-runtime";
 import { usePluginStore, type InstalledPlugin } from "@/stores/canvas/use-plugin-store";
 import type { CanvasPlugin } from "@/types/canvas-plugin";
+import { DEFAULT_VIDEO_PLUGIN_URLS } from "@/constant/env";
 import i18n from "@/i18n";
 
 const cleanups = new Map<string, () => void>();
@@ -109,7 +110,23 @@ export async function ensurePluginsLoaded() {
             }
         }),
     );
+    await installDefaultPlugins();
     await loadDevPlugins();
+}
+
+// Install trusted defaults once per browser profile. Existing records retain
+// their enabled/disabled choice, while a new profile gets all defaults enabled.
+async function installDefaultPlugins() {
+    const installedUrls = new Set(usePluginStore.getState().plugins.map((record) => record.url));
+    await Promise.all(
+        DEFAULT_VIDEO_PLUGIN_URLS.filter((url) => !installedUrls.has(url)).map(async (url) => {
+            try {
+                await installPluginFromUrl(url);
+            } catch (error) {
+                console.error(`[plugin] Failed to install default plugin: ${url}`, error);
+            }
+        }),
+    );
 }
 
 // Discover local plugins from web/public/plugins, add them disabled, and expose them in the manager without a URL.
@@ -153,7 +170,10 @@ async function loadLocalPlugins() {
 async function loadDevPlugins() {
     const raw = import.meta.env.VITE_DEV_PLUGINS;
     if (!raw) return;
-    const urls = raw.split(",").map((item) => item.trim()).filter(Boolean);
+    const urls = raw
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
     await Promise.all(
         urls.map(async (url) => {
             try {

@@ -31,8 +31,15 @@ export const DEFAULT_PROMPT_SOURCES: PromptSource[] = [
     registrySource("awesome-gpt4o-image-prompts", "Awesome GPT-4o", "https://github.com/ImgEdify/Awesome-GPT4o-Image-Prompts"),
     registrySource("youmind-gpt-image-2", "YouMind GPT Image 2", "https://github.com/YouMind-OpenLab/awesome-gpt-image-2"),
     registrySource("youmind-nano-banana-pro", "YouMind Nano Banana Pro", "https://github.com/YouMind-OpenLab/awesome-nano-banana-pro-prompts"),
+    remoteSource("lanshu-ai-video-kit", "Lanshu AI Video Kit", "https://gist.githubusercontent.com/jingx8885/1f890c0f39a34edc5aaaf5819d220dcf/raw/infinite-canvas-video-prompts.json", "https://github.com/cclank/lanshu-awesome-ai-video-kit"),
+    remoteSource("minimax-h3-video-prompts", "MiniMax H3 精选提示词", "https://raw.githubusercontent.com/SkyNotSilent/awesome-MiniMax-H3-cases/main/data/cases.json", "https://github.com/SkyNotSilent/awesome-MiniMax-H3-cases"),
+    remoteSource("seedance-2-5-video-prompts", "Seedance 2.5 提示词库", "https://raw.githubusercontent.com/AtlasCloudAI/awesome-seedance-2.5-prompts-skills/main/data/prompts.json", "https://github.com/AtlasCloudAI/awesome-seedance-2.5-prompts-skills"),
 ];
 
 function registrySource(id: string, name: string, homepage: string): PromptSource {
     return { id, name, url: `${PROMPT_REGISTRY_SOURCE_BASE}/${id}.json`, homepage, enabled: true, builtIn: true };
+}
+
+function remoteSource(id: string, name: string, url: string, homepage: string): PromptSource {
+    return { id, name, url, homepage, enabled: true, builtIn: true };
 }
