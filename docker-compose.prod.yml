@@ -6,5 +6,5 @@ services:
     image: ghcr.io/lov-team/infinite-canvas:latest
     container_name: infinite-canvas
     ports:
-      - "127.0.0.1:3005:3000"
+      - "127.0.0.1:3009:3000"
     restart: unless-stopped
