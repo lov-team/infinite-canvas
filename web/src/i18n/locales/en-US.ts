@@ -1,7 +1,7 @@
 export default {
     meta: {
-        title: "Infinite Canvas",
-        description: "An infinite canvas creation tool",
+        title: "LovBrowser Infinite Canvas",
+        description: "An AI creative space for video workflows",
     },
     theme: { toggle: "Toggle theme" },
     common: {
@@ -346,9 +346,19 @@ export default {
     },
     home: {
         promptError: "Failed to load prompts",
+        heroTitle: "Let every idea keep growing",
         description: "Generate, connect, and reshape <content>images, text, and graphics</content> in <canvas>Infinite Canvas</canvas>, turning one-off generations into a continuous creative process.",
         start: "Get started",
-        openCanvas: "Open canvas",
+        openVideo: "Open video studio",
+        stats: { canvas: "∞", canvasLabel: "Infinite creative space", models: "40+", modelsLabel: "Compatible models", local: "100%", localLabel: "Local-first" },
+        features: {
+            workflowTitle: "From idea to final cut",
+            workflowText: "Keep prompts, references, and generated results connected in one workflow.",
+            canvasTitle: "Infinite canvas",
+            canvasText: "Drag, connect, and branch freely—then return to any idea when you are ready.",
+            pluginTitle: "Video plugin ecosystem",
+            pluginText: "MiniMax, Seedance, ComfyUI, and more workflows are ready to use.",
+        },
         showcaseTitle: "Keep every great result",
         showcaseDescription: "Save reliable prompts, visual references, and generated images so your next creation starts from proven ideas.",
         viewPrompts: "View prompt library",

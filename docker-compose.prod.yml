@@ -1,0 +1,10 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ghcr.io/lov-team/infinite-canvas:latest
+    container_name: infinite-canvas
+    ports:
+      - "127.0.0.1:3005:3000"
+    restart: unless-stopped

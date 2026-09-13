@@ -1,7 +1,7 @@
 export default {
     meta: {
-        title: "无限画布",
-        description: "一个无限画布创作工具",
+        title: "LovBrowser 无限画布",
+        description: "面向视频工作流的 AI 创作空间",
     },
     theme: { toggle: "切换主题" },
     common: {
@@ -346,9 +346,19 @@ export default {
     },
     home: {
         promptError: "获取提示词失败",
+        heroTitle: "让每一次灵感，都能继续生长",
         description: "在 <canvas>无限画布</canvas> 中生成、连接和重组 <content>图片、文字与图形</content>，让创作从单次生成变成连续推演。",
         start: "开始使用",
-        openCanvas: "打开画布",
+        openVideo: "进入视频工作台",
+        stats: { canvas: "∞", canvasLabel: "无限创作空间", models: "40+", modelsLabel: "兼容模型", local: "100%", localLabel: "本地优先" },
+        features: {
+            workflowTitle: "从想法到成片",
+            workflowText: "提示词、参考素材和生成结果在同一条工作流里自然衔接。",
+            canvasTitle: "无限画布",
+            canvasText: "拖拽、连接、分组，随时回到任意一个创作分支继续迭代。",
+            pluginTitle: "视频插件生态",
+            pluginText: "MiniMax、Seedance、ComfyUI 与更多工作流插件开箱即用。",
+        },
         showcaseTitle: "沉淀每一次好结果",
         showcaseDescription: "收藏稳定出图的提示词、参考风格和结果图片，让下一次创作从已有经验开始。",
         viewPrompts: "查看提示词库",
