@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 
 import i18n from "@/i18n";
 import { dataUrlToFile, readFileAsDataUrl } from "@/lib/image-utils";
-import { clampVideoSeconds, computeVideoSize, inferVideoRatio } from "@/lib/media-size";
+import { clampVideoSeconds, computeVideoSize, inferVideoRatio, parseVideoResolution } from "@/lib/media-size";
 import { getMediaBlob, resolveMediaUrl, uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { imageToDataUrl } from "@/services/image-storage";
 import { boolConfig, buildApiUrl, modelOptionName, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
@@ -11,7 +11,18 @@ import { runModelPlugin } from "./model-plugin";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-type VideoResponse = { id: string; status?: string; error?: { message?: string }; url?: string; result_url?: string; video_url?: string; content?: { video_url?: string; url?: string } | null };
+type VideoResponse = {
+    id?: string;
+    task_id?: string;
+    status?: string;
+    error?: { message?: string };
+    url?: string;
+    result_url?: string;
+    video_url?: string;
+    file_id?: string;
+    content?: { video_url?: string; url?: string } | null;
+    task?: { id?: string; status?: string; content?: { video_url?: string; url?: string } | null };
+};
 type ApiVideoResponse = VideoResponse | { code?: number | string; data?: VideoResponse | null; msg?: string; message?: string; error?: { message?: string } };
 type ApiEnvelope<T> = T | { code?: number | string; data?: T | null; msg?: string; message?: string; error?: { message?: string } };
 type RequestOptions = { signal?: AbortSignal };
@@ -106,10 +117,10 @@ async function createPluginVideoTask(config: AiConfig, model: string, script: st
             videos,
             audios,
             params: {
-                seconds: normalizeVideoSeconds(config.videoSeconds),
-                size: normalizeVideoSize(config.size, config.vquality),
-                resolution: normalizeVideoResolution(config.vquality),
-                ratio: videoAspectRatio(config.size),
+                seconds: isH3Model(selectedModel) ? clampH3Seconds(config.videoSeconds) : normalizeVideoSeconds(config.videoSeconds),
+                size: isH3Model(selectedModel) ? h3Resolution(config.vquality) : normalizeVideoSize(config.size, config.vquality) || videoAspectRatio(config.size),
+                resolution: isH3Model(selectedModel) ? h3Resolution(config.vquality) : normalizeVideoResolution(config.vquality),
+                ratio: isH3Model(selectedModel) ? h3Ratio(config.size) : videoAspectRatio(config.size),
                 generateAudio: boolConfig(config.videoGenerateAudio, true),
                 watermark: boolConfig(config.videoWatermark, false),
                 mode: resolveVideoMode(config.videoMode, refs.length),
@@ -147,6 +158,7 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
 }
 
 async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    if (isH3Model(model)) return createH3VideoTask(config, model, prompt, references, options);
     const images = await Promise.all(references.map(async (image) => dataUrlToFile({ ...image, dataUrl: await imageToDataUrl(image) })));
     const videos = await Promise.all((options?.videos || []).map((video) => referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options)));
     const audios = await Promise.all((options?.audios || []).map((audio) => referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options)));
@@ -155,7 +167,8 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     body.append("model", modelOptionName(model));
     body.append("prompt", prompt);
     body.append("seconds", normalizeVideoSeconds(config.videoSeconds));
-    body.append("size", normalizeVideoSize(config.size, config.vquality) || "1280x720");
+    const size = normalizeVideoSize(config.size, config.vquality);
+    if (size) body.append("size", size);
     body.append("resolution_name", normalizeVideoResolution(config.vquality));
     body.append("generate_audio", String(boolConfig(config.videoGenerateAudio, true)));
     body.append("watermark", String(boolConfig(config.videoWatermark, false)));
@@ -165,13 +178,72 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
         if (images[1]) body.append("last_frame", images[1], "last.png");
     } else {
         images.forEach((file) => body.append("image[]", file, "ref.png"));
+        if (images[0]) body.append("image", images[0], "ref.png");
     }
     videos.forEach((file) => body.append("video[]", file));
     audios.forEach((file) => body.append("audio[]", file));
     try {
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config), signal: options?.signal })).data);
-        if (!created.id) throw new Error(apiText("noVideoTaskId"));
-        return { id: created.id, provider: "openai", model };
+        const id = created.id || created.task_id || created.task?.id;
+        if (!id) throw new Error(apiText("noVideoTaskId"));
+        return { id, provider: "openai", model };
+    } catch (error) {
+        throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
+    }
+}
+
+async function createH3VideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: VideoMediaOptions): Promise<VideoGenerationTask> {
+    const images = await Promise.all(references.map((image) => imageToDataUrl(image)));
+    const videos = await Promise.all((options?.videos || []).map(async (video) => readFileAsDataUrl(await referenceMediaToFile(video, "ref.mp4", "invalidReferenceVideo", options))));
+    const audios = await Promise.all((options?.audios || []).map(async (audio) => readFileAsDataUrl(await referenceMediaToFile(audio, "ref.mp3", "invalidReferenceAudio", options))));
+    const mode = resolveVideoMode(config.videoMode, images.length);
+    const duration = Number(clampH3Seconds(config.videoSeconds));
+    const resolution = h3Resolution(config.vquality);
+    const hasVisual = images.length > 0 || videos.length > 0;
+    const ratio = !hasVisual ? h3Ratio(config.size) : "adaptive";
+    const content: Array<Record<string, unknown>> = [{ type: "text", text: prompt }];
+    if (mode === "frames") {
+        if (images[0]) content.push({ type: "image_url", image_url: { url: images[0] }, role: "first_frame" });
+        if (images[1]) content.push({ type: "image_url", image_url: { url: images[1] }, role: "last_frame" });
+    } else {
+        images.forEach((url) => content.push({ type: "image_url", image_url: { url }, role: "reference_image" }));
+        videos.forEach((url) => content.push({ type: "video_url", video_url: { url }, role: "reference_video" }));
+        if (hasVisual) audios.forEach((url) => content.push({ type: "audio_url", audio_url: { url }, role: "reference_audio" }));
+    }
+    const firstFrame = mode === "frames" ? images[0] : undefined;
+    const lastFrame = mode === "frames" ? images[1] : undefined;
+    try {
+        const created = unwrapVideoResponse(
+            (
+                await axios.post<ApiVideoResponse>(
+                    aiApiUrl(config, "/videos"),
+                    {
+                        model: modelOptionName(model),
+                        prompt,
+                        seconds: String(duration),
+                        duration,
+                        size: resolution,
+                        generate_audio: true,
+                        content,
+                        resolution,
+                        ratio,
+                        ...(images.length ? { images } : {}),
+                        ...(firstFrame ? { input_reference: firstFrame, image: firstFrame } : {}),
+                        metadata: {
+                            resolution,
+                            ratio,
+                            content,
+                            ...(firstFrame ? { first_frame_image: firstFrame } : {}),
+                            ...(lastFrame ? { last_frame_image: lastFrame } : {}),
+                        },
+                    },
+                    { headers: aiHeaders(config, "application/json"), signal: options?.signal },
+                )
+            ).data,
+        );
+        const id = created.id || created.task_id || created.task?.id;
+        if (!id) throw new Error(apiText("noVideoTaskId"));
+        return { id, provider: "openai", model };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskCreateFailed")));
     }
@@ -182,12 +254,13 @@ async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, 
         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal })).data);
         const url = videoResultUrl(video);
         if (url) return { status: "completed", result: await videoResultFromUrl(url, options) };
-        if (video.status === "completed") {
+        const status = String(video.status || video.task?.status || "");
+        if (/^(completed|succeeded|success)$/i.test(status)) {
             const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
             await assertVideoBlob(content.data);
             return { status: "completed", result: { blob: content.data } };
         }
-        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: readApiErrorMessage(video.error?.message) || apiText("videoGenerationFailed") };
+        if (/fail|cancel/i.test(status)) return { status: "failed", error: readApiErrorMessage(video.error?.message) || apiText("videoGenerationFailed") };
         return { status: "pending" };
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("videoTaskQueryFailed")));
@@ -324,6 +397,25 @@ function normalizeVideoSize(value: string, resolution?: string) {
     return computeVideoSize(resolution || "720", ratio);
 }
 
+function isH3Model(model: string) {
+    return /minimax-h3|h3-i2v|h3-max|hailuo-h3/i.test(modelOptionName(model));
+}
+
+function clampH3Seconds(value: string) {
+    const seconds = Math.floor(Number(value) || 8);
+    return String(Math.max(4, Math.min(15, seconds)));
+}
+
+function h3Resolution(value: string) {
+    return Number(parseVideoResolution(value)) >= 1080 ? "2K" : "768P";
+}
+
+function h3Ratio(size: string) {
+    const ratio = inferVideoRatio(size);
+    if (ratio === "21:9" || ratio === "16:9" || ratio === "4:3" || ratio === "1:1" || ratio === "3:4" || ratio === "9:16") return ratio;
+    return "16:9";
+}
+
 function normalizeVideoResolution(value: string) {
     if (value === "low") return "480p";
     if (value === "auto" || value === "high" || value === "medium") return "720p";
@@ -332,6 +424,17 @@ function normalizeVideoResolution(value: string) {
 }
 
 function unwrapVideoResponse(payload: ApiVideoResponse) {
+    if (typeof payload === "string" && payload) return { id: payload };
+    if (payload && typeof payload === "object") {
+        const record = payload as Record<string, unknown>;
+        const baseResp = record.base_resp as { status_code?: number; status_msg?: string } | undefined;
+        if (baseResp && baseResp.status_code && baseResp.status_code !== 0) throw new Error(baseResp.status_msg || apiText("requestFailed"));
+        if (record.code === "success") {
+            const data = record.data;
+            if (typeof data === "string" && data) return { id: data };
+            if (data) return unwrapVideoResponse(data as ApiVideoResponse);
+        }
+    }
     return unwrapEnvelope(payload, apiText("noVideoTask"));
 }
 
@@ -346,7 +449,7 @@ function unwrapEnvelope<T>(payload: ApiEnvelope<T>, emptyMessage: string): T {
 }
 
 function videoResultUrl(payload: VideoResponse) {
-    return [payload.video_url, payload.result_url, payload.url, payload.content?.video_url, payload.content?.url].find((url) => typeof url === "string" && (isPublicMediaUrl(url) || /\.mp4(\?|#|$)/i.test(url)));
+    return [payload.video_url, payload.result_url, payload.url, payload.content?.video_url, payload.content?.url, payload.task?.content?.video_url, payload.task?.content?.url].find((url) => typeof url === "string" && (isPublicMediaUrl(url) || /\.mp4(\?|#|$)/i.test(url)));
 }
 
 function readApiErrorMessage(value: unknown): string {

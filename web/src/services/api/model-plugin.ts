@@ -274,7 +274,7 @@ async function generateImage({
         size: size,
         quality: quality,
         background: background,
-        response_format: "b64_json",
+        ...(/gpt-image/i.test(model) ? {} : { response_format: "b64_json" }),
       },
     });
     const urls = [];
@@ -291,7 +291,7 @@ async function generateImage({
   form.set("size", size);
   form.set("quality", quality);
   form.set("background", background);
-  form.set("response_format", "b64_json");
+  if (!/gpt-image/i.test(model)) form.set("response_format", "b64_json");
   const imageField = images.length > 1 ? "image[]" : "image";
   for (const dataUrl of images) {
     form.append(imageField, await (await fetch(dataUrl)).blob(), "ref.png");
@@ -438,8 +438,9 @@ return await generateImage({
         {
             label: i18n.t("modelPlugin.templates.openai"),
             script: `/**
- * OpenAI-compatible video: POST /v1/videos (multipart), then poll GET /v1/videos/{id}.
- * Do not set Content-Type on FormData; the browser adds the boundary.
+ * OpenAI-compatible video: POST /v1/videos, then poll GET /v1/videos/{id}.
+ * MiniMax H3 sends JSON (duration 4-15, resolution 768P/2K, ratio, content).
+ * Other models send multipart. Do not set Content-Type on FormData.
  * @param {string} prompt
  * @param {string[]} images - reference images as data URLs
  * @param {File[]} videos - reference videos; empty when none
@@ -447,8 +448,9 @@ return await generateImage({
  * @param {object} params
  * @param {string} params.mode - "frames" uses first/last frame fields; "reference" sends all images as references. More than 2 images become "reference".
  * @param {string|number} params.seconds - duration
- * @param {string} params.size - output size, e.g. "1280x720"
- * @param {string} params.resolution - e.g. "720p"
+ * @param {string} params.size - H3 uses 768P/2K; others may use WxH
+ * @param {string} params.resolution
+ * @param {string} params.ratio - e.g. "16:9"
  * @param {boolean} params.generateAudio
  * @param {boolean} params.watermark
  * @param {string} model
@@ -468,6 +470,7 @@ async function generateVideo({
     seconds,
     size,
     resolution,
+    ratio,
     generateAudio,
     watermark,
   },
@@ -477,12 +480,45 @@ async function generateVideo({
   request,
   poll,
 }) {
+  const headers = {
+    Authorization: \`Bearer \${apiKey}\`,
+  };
+  const isH3 = /minimax-h3|h3-i2v|h3-max|hailuo-h3/i.test(model);
+  let task;
+  if (isH3) {
+    const duration = Math.max(4, Math.min(15, Number(seconds) || 8));
+    const outputResolution = resolution === "2K" || size === "2K" ? "2K" : "768P";
+    const content = [{ type: "text", text: prompt }];
+    if (mode === "frames") {
+      if (images[0]) content.push({ type: "image_url", image_url: { url: images[0] }, role: "first_frame" });
+      if (images[1]) content.push({ type: "image_url", image_url: { url: images[1] }, role: "last_frame" });
+    } else {
+      for (const url of images) content.push({ type: "image_url", image_url: { url }, role: "reference_image" });
+    }
+    task = await request({
+      method: "post",
+      url: \`\${baseUrl}/v1/videos\`,
+      headers: { ...headers, "Content-Type": "application/json" },
+      data: {
+        model,
+        prompt,
+        seconds: String(duration),
+        duration,
+        size: outputResolution,
+        resolution: outputResolution,
+        ratio: images.length ? "adaptive" : (ratio || "16:9"),
+        generate_audio: true,
+        content,
+        metadata: { resolution: outputResolution, ratio: images.length ? "adaptive" : (ratio || "16:9"), content },
+      },
+    });
+  } else {
   const form = new FormData();
   form.set("model", model);
   form.set("prompt", prompt);
   form.set("seconds", String(seconds || 8));
-  form.set("size", String(size || "1280x720"));
-  form.set("resolution_name", String(resolution || "720p"));
+  if (size) form.set("size", String(size));
+  if (resolution) form.set("resolution_name", String(resolution));
   form.set("generate_audio", String(generateAudio !== false));
   form.set("watermark", String(watermark === true));
   form.set("mode", mode);
@@ -497,6 +533,9 @@ async function generateVideo({
     for (const dataUrl of images) {
       form.append("image[]", await (await fetch(dataUrl)).blob(), "ref.png");
     }
+    if (images[0]) {
+      form.append("image", await (await fetch(images[0])).blob(), "ref.png");
+    }
   }
   for (const file of videos) {
     form.append("video[]", file);
@@ -504,34 +543,32 @@ async function generateVideo({
   for (const file of audios) {
     form.append("audio[]", file);
   }
-
-  const headers = {
-    Authorization: \`Bearer \${apiKey}\`,
-  };
-  const task = await request({
+  task = await request({
     method: "post",
     url: \`\${baseUrl}/v1/videos\`,
     headers,
     data: form,
   });
+  }
 
   return await poll(
     async () => {
+      const id = task.id || task.task_id;
       const state = await request({
         method: "get",
-        url: \`\${baseUrl}/v1/videos/\${task.id}\`,
+        url: \`\${baseUrl}/v1/videos/\${id}\`,
         headers,
       });
-      if (state.status === "failed" || state.status === "cancelled") {
+      if (state.status === "failed" || state.status === "cancelled" || /fail/i.test(String(state.status || ""))) {
         throw new Error(state.error && state.error.message ? state.error.message : "video generation failed");
       }
-      if (state.video_url || state.url) {
-        return { url: state.video_url || state.url };
+      if (state.video_url || state.url || (state.content && state.content.url) || (state.task && state.task.content && state.task.content.url)) {
+        return { url: state.video_url || state.url || (state.content && state.content.url) || (state.task && state.task.content && state.task.content.url) };
       }
-      if (state.status === "completed") {
+      if (state.status === "completed" || /^(succeeded|success)$/i.test(String(state.status || ""))) {
         return await request({
           method: "get",
-          url: \`\${baseUrl}/v1/videos/\${task.id}/content\`,
+          url: \`\${baseUrl}/v1/videos/\${id}/content\`,
           headers,
           responseType: "blob",
         });

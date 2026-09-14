@@ -90,35 +90,33 @@ export const defaultConfig: AiConfig = {
             apiKey: "",
             apiFormat: "openai",
             models: [
-                { name: "gpt-image-2", capability: "image" },
-                { name: "grok-imagine-video", capability: "video" },
-                // MiniMax H3 uses the OpenAI-compatible /v1/videos contract.
-                // Keep both text-to-video and image-to-video SKUs selectable;
-                // the latter is useful when a canvas node has a reference image.
-                { name: "minimax-h3", capability: "video" },
-                { name: "h3-i2v", capability: "video" },
+                { name: "gpt-image-2.5-flare", capability: "image" },
+                { name: "gpt-image-2.5-sunburst", capability: "image" },
+                { name: "MiniMax-H3", capability: "video" },
+                { name: "minimax-h3/image-to-video", capability: "video" },
                 { name: "gpt-5.5", capability: "text" },
-                { name: "gpt-4o-mini-tts", capability: "audio" },
+                { name: "fish-s1", capability: "audio" },
+                { name: "suno_music", capability: "audio" },
             ],
         },
     ],
-    model: "default::gpt-image-2",
-    imageModel: "default::gpt-image-2",
-    videoModel: "default::grok-imagine-video",
+    model: "default::gpt-image-2.5-flare",
+    imageModel: "default::gpt-image-2.5-flare",
+    videoModel: "default::MiniMax-H3",
     textModel: "default::gpt-5.5",
-    audioModel: "default::gpt-4o-mini-tts",
+    audioModel: "default::fish-s1",
     audioVoice: "alloy",
     audioFormat: "mp3",
     audioSpeed: "1",
     audioInstructions: "",
-    videoSeconds: "6",
+    videoSeconds: "8",
     vquality: "720",
     videoGenerateAudio: "true",
     videoWatermark: "false",
     videoMode: "frames",
     systemPrompt: "",
     reasoningEffort: "auto",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::minimax-h3", "default::h3-i2v", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
+    models: ["default::gpt-image-2.5-flare", "default::gpt-image-2.5-sunburst", "default::MiniMax-H3", "default::minimax-h3/image-to-video", "default::gpt-5.5", "default::fish-s1", "default::suno_music"],
     quality: "auto",
     size: "1:1",
     background: "",
@@ -156,7 +154,7 @@ const VIDEO_KEYWORDS = ["video", "sora", "veo", "kling", "wan", "hailuo", "minim
 export function boolConfig(value: string, fallback: boolean) {
     return value ? value === "true" : fallback;
 }
-const AUDIO_KEYWORDS = ["audio", "tts", "speech", "voice", "music", "sound"];
+const AUDIO_KEYWORDS = ["audio", "tts", "speech", "voice", "music", "sound", "suno", "chirp", "fish"];
 const IMAGE_KEYWORDS = ["seedream", "gpt-image", "image", "dall-e", "dalle", "imagen", "flux", "sdxl", "stable-diffusion", "midjourney"];
 
 /** Best-effort default capability for a freshly fetched model name; user can override in the channel editor. */
@@ -270,7 +268,7 @@ export const useConfigStore = create<ConfigStore>()(
                         audioSpeed: config.audioSpeed || defaultConfig.audioSpeed,
                         audioInstructions: config.audioInstructions || "",
                         reasoningEffort: config.reasoningEffort || "auto",
-                        videoSeconds: config.videoSeconds || "6",
+                        videoSeconds: config.videoSeconds || "8",
                         vquality: config.vquality || "720",
                         videoGenerateAudio: config.videoGenerateAudio || "true",
                         videoWatermark: config.videoWatermark || "false",
@@ -452,7 +450,7 @@ function normalizeChannels(config: AiConfig) {
             models: normalizeChannelModels([
                 ...(channel.models || []),
                 ...((channel.id || (index === 0 ? "default" : `channel-${index + 1}`)) === "default"
-                    ? [{ name: "minimax-h3", capability: "video" as const }, { name: "h3-i2v", capability: "video" as const }]
+                    ? [{ name: "MiniMax-H3", capability: "video" as const }, { name: "minimax-h3/image-to-video", capability: "video" as const }]
                     : []),
             ]),
         }),

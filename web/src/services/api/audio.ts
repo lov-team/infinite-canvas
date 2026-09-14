@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { audioMimeType, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
+import { audioMimeType, audioVoiceOptions, normalizeAudioFormatValue, normalizeAudioSpeedValue, normalizeAudioVoiceValue } from "@/lib/audio-generation";
 import { uploadMediaFile, type UploadedFile } from "@/services/file-storage";
 import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, type AiConfig } from "@/stores/use-config-store";
 import { runModelPlugin } from "./model-plugin";
@@ -25,6 +25,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
     const model = requestConfig.model.trim();
     const format = normalizeAudioFormatValue(config.audioFormat);
     const script = resolveModelScript(config, config.model || config.audioModel);
+    const voice = resolveSpeechVoice(model, config.audioVoice);
     if (script) {
         if (!model) throw new Error(apiText("audioModelRequired"));
         if (!requestConfig.baseUrl.trim()) throw new Error(apiText("baseUrlRequired"));
@@ -35,7 +36,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
                 script,
                 config: requestConfig,
                 prompt,
-                params: { voice: normalizeAudioVoiceValue(config.audioVoice), format, speed: normalizeAudioSpeedValue(config.audioSpeed), instructions: config.audioInstructions.trim() },
+                params: { voice, format, speed: normalizeAudioSpeedValue(config.audioSpeed), instructions: config.audioInstructions.trim() },
                 signal: options?.signal,
             });
             return await audioPluginBlob(result, format);
@@ -44,7 +45,8 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
         }
     }
     assertAudioConfig(requestConfig, model);
-    const instructions = config.audioInstructions.trim();
+    if (isSunoModel(model)) return requestSunoMusic(requestConfig, model, prompt, options);
+    const instructions = isFishAudioModel(model) ? "" : config.audioInstructions.trim();
 
     try {
         const response = await axios.post<Blob>(
@@ -52,7 +54,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
             {
                 model,
                 input: prompt,
-                voice: normalizeAudioVoiceValue(config.audioVoice),
+                voice: isFishAudioModel(model) ? voice : voice || "alloy",
                 response_format: format,
                 speed: Number(normalizeAudioSpeedValue(config.audioSpeed)),
                 ...(instructions ? { instructions } : {}),
@@ -64,6 +66,109 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("audioGenerationFailed")));
     }
+}
+
+function originApiUrl(config: AiConfig, path: string) {
+    const base = config.baseUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "");
+    return withLocalProxy(`${base}${path}`);
+}
+
+function isSunoModel(model: string) {
+    return /suno|chirp/i.test(model);
+}
+
+function isFishAudioModel(model: string) {
+    return /fish|speech-1|s2\.1|s2-pro/i.test(model);
+}
+
+function resolveSpeechVoice(model: string, voice: string) {
+    if (isFishAudioModel(model) || isSunoModel(model)) {
+        const value = voice.trim();
+        if (!value || audioVoiceOptions.some((item) => item.value === value)) return "";
+        return value;
+    }
+    return normalizeAudioVoiceValue(voice);
+}
+
+function sunoMv(model: string) {
+    const name = model.trim();
+    if (/^chirp/i.test(name)) return name;
+    const match = name.match(/chirp[-_]?[\w.]+/i);
+    if (match) return match[0];
+    return "chirp-v4";
+}
+
+type SunoSubmitResponse = { code?: number | string; message?: string; msg?: string; data?: unknown };
+type SunoClip = { audio_url?: string; status?: string; metadata?: { error_message?: string } };
+type SunoTask = { status?: string; fail_reason?: string; data?: SunoClip | SunoClip[] };
+
+async function requestSunoMusic(config: AiConfig, model: string, prompt: string, options?: RequestOptions): Promise<Blob> {
+    try {
+        const submitted = (await axios.post<SunoSubmitResponse>(
+            originApiUrl(config, "/suno/submit/music"),
+            { gpt_description_prompt: prompt, model, ...( /^chirp/i.test(model) ? { mv: sunoMv(model) } : {}) },
+            { headers: aiHeaders(config), signal: options?.signal },
+        )).data;
+        const taskId = sunoTaskId(submitted);
+        if (!taskId) throw new Error(readApiErrorMessage(submitted) || apiText("audioGenerationFailed"));
+        for (let attempt = 0; attempt < 90; attempt += 1) {
+            if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+            const fetched = (await axios.get<SunoSubmitResponse>(originApiUrl(config, `/suno/fetch/${taskId}`), { headers: aiHeaders(config), signal: options?.signal })).data;
+            const task = sunoTask(fetched);
+            const clips = Array.isArray(task.data) ? task.data : task.data ? [task.data] : [];
+            const audioUrl = clips.find((clip) => clip.audio_url)?.audio_url;
+            if (audioUrl) {
+                const audio = await axios.get<Blob>(withLocalProxy(audioUrl), { responseType: "blob", signal: options?.signal });
+                return audio.data.type.startsWith("audio/") ? audio.data : new Blob([audio.data], { type: "audio/mpeg" });
+            }
+            if (/fail/i.test(String(task.status || ""))) throw new Error(task.fail_reason || clips[0]?.metadata?.error_message || apiText("audioGenerationFailed"));
+            await delay(4000, options?.signal);
+        }
+        throw new Error(apiText("audioGenerationFailed"));
+    } catch (error) {
+        throw new Error(readAxiosError(error, apiText("audioGenerationFailed")));
+    }
+}
+
+function sunoTaskId(payload: SunoSubmitResponse) {
+    if (payload.code !== undefined && payload.code !== 0 && payload.code !== "0" && payload.code !== "success") {
+        throw new Error(readApiErrorMessage(payload) || apiText("audioGenerationFailed"));
+    }
+    const record = payload as SunoSubmitResponse & { task_id?: string; id?: string };
+    if (typeof record.task_id === "string" && record.task_id) return record.task_id;
+    if (typeof record.id === "string" && record.id) return record.id;
+    const data = payload.data;
+    if (typeof data === "string" && data) return data;
+    if (data && typeof data === "object") {
+        const inner = data as { task_id?: string; id?: string };
+        return inner.task_id || inner.id || "";
+    }
+    return "";
+}
+
+function sunoTask(payload: SunoSubmitResponse): SunoTask {
+    if (payload.code !== undefined && payload.code !== 0 && payload.code !== "0" && payload.code !== "success") {
+        throw new Error(readApiErrorMessage(payload) || apiText("audioGenerationFailed"));
+    }
+    return (payload.data && typeof payload.data === "object" ? payload.data : payload) as SunoTask;
+}
+
+function delay(ms: number, signal?: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+        }
+        const timer = setTimeout(resolve, ms);
+        signal?.addEventListener(
+            "abort",
+            () => {
+                clearTimeout(timer);
+                reject(new DOMException("Aborted", "AbortError"));
+            },
+            { once: true },
+        );
+    });
 }
 
 async function audioPluginBlob(result: unknown, format: string): Promise<Blob> {

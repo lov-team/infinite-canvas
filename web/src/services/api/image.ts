@@ -72,7 +72,11 @@ type ResponseApiPayload = {
 type ResponseStreamState = { buffer: string; text: string; payload?: ResponseApiPayload; error?: string };
 
 type ImageApiResponse = {
-    data?: Array<Record<string, unknown>>;
+    data?: Array<Record<string, unknown>> | ImageApiResponse;
+    id?: string;
+    task_id?: string;
+    status?: string;
+    object?: string;
     error?: { message?: string };
     code?: number;
     msg?: string;
@@ -115,8 +119,6 @@ const IMAGE_MIN_PIXELS = 655360;
 const IMAGE_MAX_PIXELS = 8294400;
 const IMAGE_MAX_EDGE = 3840;
 const IMAGE_MAX_RATIO = 3;
-const IMAGE_OUTPUT_FORMAT = "png";
-
 const GEMINI_SUPPORTED_RATIOS = ["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
 const GEMINI_IMAGE_SIZE_BY_QUALITY: Record<string, string> = { low: "1K", medium: "2K", high: "4K", standard: "1K", hd: "2K" };
 
@@ -124,6 +126,14 @@ function normalizeQuality(quality: string) {
     const value = quality.trim().toLowerCase();
     const normalized = QUALITY_ALIASES[value] || value;
     return QUALITY_BASE[normalized] ? normalized : undefined;
+}
+
+function resolveOpenAIImageQuality(model: string, quality: string | undefined) {
+    const raw = (quality || "").trim().toLowerCase();
+    if (raw === "auto") return isGptImageModel(model) ? "auto" : undefined;
+    const normalized = normalizeQuality(quality || "");
+    if (isGptImageModel(model) && !normalized) return "auto";
+    return normalized;
 }
 
 /** Only "transparent" is forwarded; any other value (incl. empty) means keep the default opaque background. */
@@ -201,6 +211,29 @@ function resolveRequestSize(quality: string | undefined, size: string) {
     throw new Error(apiText("invalidImageSizeFormat"));
 }
 
+function isGptImageModel(model: string) {
+    return /gpt-image/i.test(model);
+}
+
+/** Map UI size/quality onto values OpenAI-compatible and new-api image endpoints accept. */
+function resolveOpenAIImageSize(model: string, quality: string | undefined, size: string) {
+    const value = size.trim();
+    if (!value || value.toLowerCase() === "auto") return isGptImageModel(model) ? "auto" : undefined;
+    const raw = resolveRequestSize(quality, size);
+    if (!raw) return isGptImageModel(model) ? "auto" : undefined;
+    const dimensions = parseImageDimensions(raw);
+    if (!dimensions) return raw;
+    const ratio = dimensions.width / dimensions.height;
+    const square = Math.abs(ratio - 1) < 0.2;
+    const landscape = ratio >= 1;
+    if (/dall-e-3|dall-e3|dalle-3/i.test(model)) {
+        if (square) return "1024x1024";
+        return landscape ? "1792x1024" : "1024x1792";
+    }
+    if (square) return "1024x1024";
+    return landscape ? "1536x1024" : "1024x1536";
+}
+
 function resolveGeminiImageConfig(config: AiConfig) {
     const value = config.size.trim();
     const dimensions = parseImageDimensions(value);
@@ -250,29 +283,101 @@ function resolveImageSource(item: Record<string, unknown>) {
     return null;
 }
 
-function parseImagePayload(payload: ImageApiResponse) {
+function unwrapImageEnvelope(payload: ImageApiResponse): ImageApiResponse {
+    if (!payload || typeof payload !== "object") return payload;
     if (typeof payload.code === "number" && payload.code !== 0) {
         throw new Error(payload.msg || apiText("requestFailed"));
     }
-    // Support data, images, and results response fields used by different APIs.
-    const imageList = payload.data
-        || (payload as Record<string, unknown>).images as Array<Record<string, unknown>> | undefined
-        || (payload as Record<string, unknown>).results as Array<Record<string, unknown>> | undefined
-        || [];
-    const images = imageList
+    if (payload.data && !Array.isArray(payload.data) && typeof payload.data === "object") {
+        const inner = payload.data as ImageApiResponse;
+        if (Array.isArray(inner.data) || inner.id || (inner as { status?: string }).status) return unwrapImageEnvelope(inner);
+    }
+    return payload;
+}
+
+function asImageRecords(payload: ImageApiResponse): Array<Record<string, unknown>> {
+    const record = payload as Record<string, unknown>;
+    const candidates = [payload.data, record.images, record.results, record.result];
+    for (const candidate of candidates) {
+        if (Array.isArray(candidate)) {
+            return candidate.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object");
+        }
+        if (candidate && typeof candidate === "object") {
+            const item = candidate as Record<string, unknown>;
+            if (typeof item.b64_json === "string" || typeof item.url === "string") return [item];
+        }
+    }
+    if (typeof record.b64_json === "string" || typeof record.url === "string") return [record];
+    return [];
+}
+
+function parseImagePayload(payload: ImageApiResponse) {
+    const current = unwrapImageEnvelope(payload);
+    const images = asImageRecords(current)
         .map(resolveImageSource)
         .filter((value): value is string => Boolean(value))
         .map((dataUrl) => ({ id: nanoid(), dataUrl }));
 
     if (images.length === 0) {
-        // Check whether the response contains data in an unrecognized format.
-        const rawKeys = Object.keys(payload).filter((k) => k !== "code" && k !== "msg" && k !== "error");
+        const rawKeys = Object.keys(current).filter((k) => k !== "code" && k !== "msg" && k !== "error");
         throw new Error(rawKeys.length > 0
             ? apiText("unknownImageResponse", { fields: rawKeys.join(", ") })
             : apiText("noImageReturned"));
     }
 
     return images;
+}
+
+function imageTaskId(payload: ImageApiResponse) {
+    const record = payload as Record<string, unknown>;
+    const id = typeof record.id === "string" ? record.id : typeof record.task_id === "string" ? record.task_id : "";
+    if (!id || asImageRecords(payload).some(resolveImageSource)) return "";
+    const status = String(record.status || "");
+    const object = String(record.object || "");
+    if (object === "generation.task" || /queued|in_progress|pending|processing|not_start/i.test(status)) return id;
+    if (!status && id.startsWith("task_")) return id;
+    return "";
+}
+
+async function parseOrWaitImagePayload(config: AiConfig, payload: ImageApiResponse, options?: RequestOptions) {
+    const current = unwrapImageEnvelope(payload);
+    const taskId = imageTaskId(current);
+    if (taskId) return waitForImageTask(config, taskId, options);
+    return parseImagePayload(current);
+}
+
+async function waitForImageTask(config: AiConfig, taskId: string, options?: RequestOptions) {
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+        if (options?.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+        const response = await axios.get<ImageApiResponse>(aiApiUrl(config, `/images/generations/${taskId}`), {
+            headers: aiHeaders(config),
+            signal: options?.signal,
+        });
+        const payload = unwrapImageEnvelope(response.data);
+        const status = String((payload as { status?: string }).status || "");
+        if (/failed|cancelled|canceled/i.test(status)) throw new Error(readApiErrorMessage(payload) || apiText("requestFailed"));
+        try {
+            return parseImagePayload(payload);
+        } catch (error) {
+            if (attempt === 119) throw error;
+        }
+        await delay(2500, options?.signal);
+    }
+    throw new Error(apiText("requestFailed"));
+}
+
+function delay(ms: number, signal?: AbortSignal) {
+    return new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) {
+            reject(new DOMException("Aborted", "AbortError"));
+            return;
+        }
+        const timer = setTimeout(resolve, ms);
+        signal?.addEventListener("abort", () => {
+            clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+        }, { once: true });
+    });
 }
 
 function readApiErrorMessage(value: unknown): string {
@@ -725,8 +830,8 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
     const n = Math.max(1, Math.min(15, Math.floor(Math.abs(Number(config.count)) || 1)));
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
-        const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const quality = resolveOpenAIImageQuality(requestConfig.model, config.quality);
+        const requestSize = resolveOpenAIImageSize(requestConfig.model, quality, config.size);
         const background = normalizeBackground(config.background);
         try {
             const result = await runModelPlugin({
@@ -750,9 +855,10 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
             throw new Error(readAxiosError(error, apiText("requestFailed")));
         }
     }
-    const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size);
+    const quality = resolveOpenAIImageQuality(requestConfig.model, config.quality);
+    const requestSize = resolveOpenAIImageSize(requestConfig.model, quality, config.size);
     const background = normalizeBackground(config.background);
+    const gptImage = isGptImageModel(requestConfig.model);
     try {
         const response = await axios.post<ImageApiResponse>(
             aiApiUrl(requestConfig, "/images/generations"),
@@ -763,17 +869,15 @@ export async function requestGeneration(config: AiConfig, prompt: string, option
                 ...(quality ? { quality } : {}),
                 ...(requestSize ? { size: requestSize } : {}),
                 ...(background ? { background } : {}),
-                // gpt-image models reject response_format; they always return b64.
-                ...(/gpt-image/.test(requestConfig.model) ? {} : { response_format: "b64_json" }),
-                output_format: IMAGE_OUTPUT_FORMAT,
+                // gpt-image on this new-api rejects output_format; still omit response_format.
+                ...(gptImage ? {} : { response_format: "b64_json" }),
             },
             {
                 headers: aiHeaders(requestConfig, "application/json"),
                 signal: options?.signal,
             },
         );
-        const images = await parseImagePayload(response.data);
-        return images;
+        return await parseOrWaitImagePayload(requestConfig, response.data, options);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
@@ -785,8 +889,8 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
     const requestPrompt = buildImageReferencePromptText(prompt, references);
     const script = resolveModelScript(config, config.model || config.imageModel);
     if (script) {
-        const quality = normalizeQuality(config.quality);
-        const requestSize = resolveRequestSize(quality, config.size);
+        const quality = resolveOpenAIImageQuality(requestConfig.model, config.quality);
+        const requestSize = resolveOpenAIImageSize(requestConfig.model, quality, config.size);
         const background = normalizeBackground(config.background);
         const refs = await Promise.all(references.map((image) => imageToDataUrl(image)));
         try {
@@ -812,18 +916,15 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
         }
     }
 
-    const quality = normalizeQuality(config.quality);
-    const requestSize = resolveRequestSize(quality, config.size);
+    const quality = resolveOpenAIImageQuality(requestConfig.model, config.quality);
+    const requestSize = resolveOpenAIImageSize(requestConfig.model, quality, config.size);
     const background = normalizeBackground(config.background);
+    const gptImage = isGptImageModel(requestConfig.model);
     const formData = new FormData();
     formData.set("model", requestConfig.model);
     formData.set("prompt", withSystemPrompt(requestConfig, requestPrompt));
     formData.set("n", String(n));
-    // gpt-image models reject response_format; they always return b64.
-    if (!/gpt-image/.test(requestConfig.model)) {
-        formData.set("response_format", "b64_json");
-    }
-    formData.set("output_format", IMAGE_OUTPUT_FORMAT);
+    if (!gptImage) formData.set("response_format", "b64_json");
     if (quality) {
         formData.set("quality", quality);
     }
@@ -839,8 +940,7 @@ export async function requestEdit(config: AiConfig, prompt: string, references: 
 
     try {
         const response = await axios.post<ImageApiResponse>(aiApiUrl(requestConfig, "/images/edits"), formData, { headers: aiHeaders(requestConfig), signal: options?.signal });
-        const images = await parseImagePayload(response.data);
-        return images;
+        return await parseOrWaitImagePayload(requestConfig, response.data, options);
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("requestFailed")));
     }
