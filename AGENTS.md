@@ -80,10 +80,31 @@
 
 ## 服务器部署
 
-- 生产服务器通过 SSH 使用 `ubuntu@43.134.133.185`。
-- 远程项目目录为 `/home/ubuntu/infinite-canvas`。
-- 用户要求直接部署时，优先在该服务器基于远程项目现有 Docker Compose 配置构建并重启，不依赖 GitHub Actions。
-- 部署前检查远程分支、工作区和容器状态；部署后检查容器状态及本机 HTTP 健康响应，不得仅以构建命令退出成功作为上线完成。
+生产站点是这台机器上的 Docker 静态前端，经本机 Nginx 反代后由 Cloudflare 对外提供。用户要求直接上线时走下面流程，不依赖 GitHub Actions，也不发版本、不打 tag，除非用户另外要求。
+
+- SSH：`ubuntu@43.134.133.185`（BatchMode，不要交互登录）。
+- 远程目录：`/home/ubuntu/infinite-canvas`。
+- Compose：`docker-compose.yml` + `docker-compose.prod.yml`。后者在本机构建镜像 `ghcr.io/lov-team/infinite-canvas:latest`，并把容器端口绑到 `127.0.0.1:3009`。
+- 本机 Nginx：`/etc/nginx/sites-enabled/video.lovbrowser.com.conf` 把 `video.lovbrowser.com` 反代到 `http://127.0.0.1:3009`。
+- 对外验收地址：`https://video.lovbrowser.com/`。不要把 `https://canvas.best/` 当成这次服务器部署的结果；它目前不是这台机器上的 3009 源站。
+- Docker 必须用 `sudo`；`unix:///var/run/docker.sock` 对 `ubuntu` 用户无权限。
+- 构建会 `bun install`，`web/package.json` 里的 `file:vendor/aicut/*.tgz` 必须在 install 前 `COPY web/vendor`，否则镜像构建会失败。
+
+上线步骤：
+
+1. 部署前先看远程状态，有脏工作区、非 `main`、或容器已不健康时先停下来问用户，不要强行覆盖：
+   - `git status -sb`、`git log -1 --oneline`
+   - `sudo docker compose -f docker-compose.yml -f docker-compose.prod.yml ps`
+   - `curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:3009/`
+2. `git fetch origin && git pull --ff-only origin main`。只快进，不 rebase、不 merge、不在服务器改代码。
+3. `sudo docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
+4. 部署后必须同时确认下面几项，不能只看 compose 退出码：
+   - 容器 `infinite-canvas` 为 `running`，端口仍是 `127.0.0.1:3009->3000`
+   - `curl http://127.0.0.1:3009/` 返回 200，且 `index.html` 里的 `/assets/*.js` 哈希是新构建
+   - 容器内静态资源能搜到本次应上线的代码（例如 `/video/edit`、`MiniMax-H3`）
+   - `curl https://video.lovbrowser.com/` 返回 200，且资源哈希与 `127.0.0.1:3009` 一致
+
+不要在这台机器上改 Nginx、Cloudflare 或 `canvas.best` 的 DNS，除非用户明确要求。`docs.canvas.best` 是独立的 Vercel 文档站，这次前端上线不要动它。
 
 ## PR 审查与处理
 
