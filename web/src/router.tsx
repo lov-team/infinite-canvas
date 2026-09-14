@@ -1,3 +1,4 @@
+import { lazy, Suspense } from "react";
 import { createBrowserRouter, Outlet } from "react-router-dom";
 
 import { AnalyticsTracker } from "@/components/layout/analytics-tracker";
@@ -12,6 +13,8 @@ import NotFound from "@/pages/not-found";
 import PromptsPage from "@/pages/prompts";
 import VideoPage from "@/pages/video";
 
+const VideoEditPage = lazy(() => import("@/pages/video/edit"));
+
 export const router = createBrowserRouter([
     {
         element: (
@@ -24,6 +27,14 @@ export const router = createBrowserRouter([
             { path: "/", element: <HomePage /> },
             { path: "/image", element: <ImagePage /> },
             { path: "/video", element: <VideoPage /> },
+            {
+                path: "/video/edit",
+                element: (
+                    <Suspense fallback={<div className="h-full bg-stone-100 dark:bg-stone-950" />}>
+                        <VideoEditPage />
+                    </Suspense>
+                ),
+            },
             { path: "/assets", element: <AssetsPage /> },
             { path: "/prompts", element: <PromptsPage /> },
             { path: "/canvas", element: <CanvasPage /> },
