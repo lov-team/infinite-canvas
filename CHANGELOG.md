@@ -2,6 +2,8 @@
 
 ## Unreleased
 
++ [调整] 去掉页面右上角 GitHub 开源跳转。
++ [优化] 首页统计条、功能卡片和展示区改为同宽对齐，避免区块重叠。
 + [修复] `gpt-image-2.5-flare` / `gpt-image-2.5-sunburst` 生图改为发送允许的 size 与 quality（含 auto），不带 `response_format` 和 `output_format`，异步任务会继续轮询。
 + [修复] MiniMax H3 生视频改为发送 4–15 秒、`768P`/`2K` 和比例，不再把尺寸对齐成 Sora 的 `1280x720`。
 + [修复] Suno 改为走 `/suno/submit/music` 灵感模式并轮询取音频；Fish Audio 走 `/v1/audio/speech` 且不再把音色强制改成 alloy。
