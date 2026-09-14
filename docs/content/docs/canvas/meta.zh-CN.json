@@ -4,6 +4,7 @@
   "defaultOpen": true,
   "pages": [
     "canvas-node-manual",
+    "minimax-h3-video",
     "canvas-shortcuts"
   ]
 }

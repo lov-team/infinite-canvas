@@ -1,0 +1,130 @@
+---
+title: MiniMax H3 Video
+description: Use MiniMax H3 in Infinite Canvas for text-to-video, first/last frames, and general reference
+---
+
+# MiniMax H3 Video
+
+This page explains how to use MiniMax H3 in Infinite Canvas: text-to-video, first/last-frame image-to-video, and general reference (omni-reference). Follow the canvas or Video Studio steps here; you do not need MiniMax’s platform docs.
+
+The default provider presets `MiniMax-H3` and `minimax-h3/image-to-video`. Add an API key and set one of those as the default video model. Other OpenAI-compatible gateways use the same request rules when the model name contains `minimax-h3`, `h3-i2v`, `h3-max`, or `hailuo-h3`.
+
+## Three workflows
+
+Video settings expose two modes: **First & last frame** and **General reference**. The actual request depends on which assets you attach.
+
+| Goal | Mode | Required assets |
+| --- | --- | --- |
+| Text-to-video | Either mode | Prompt only; no images, videos, or audio |
+| Animate one still | First & last frame | One image as the first frame |
+| Transition between two stills | First & last frame | Two images, first then last, in connection order |
+| Keep a character, motion, camera, or voice | General reference | At least one reference image or one reference video; audio is optional |
+
+First/last-frame and general reference cannot be mixed. Once a reference image, reference video, or reference audio is attached, Infinite Canvas sends a general-reference request and no longer treats images as first/last frames. More than two images are also sent as general references even if the UI still shows first-and-last-frame mode.
+
+## On the canvas
+
+1. Create or select a video node or generation-configuration node and choose MiniMax H3.
+2. Write the prompt on the node, or connect a text node.
+3. Attach assets with connections or the reference bar above the input: image nodes as reference images, video nodes as reference videos, audio nodes as reference audio. A group expands to every valid child.
+4. Set mode, resolution, ratio, and duration, then generate.
+
+Use `@` to mention connected images, videos, and audio. Spell out what each asset is for, for example “appearance from Image 1, motion from Video 1, voice from Audio 1”.
+
+A generation-configuration node reads upstream text as the prompt and shows the current references in the input preview. If a just-connected asset is missing from that preview, fix the connection or reference bar before generating again.
+
+## In Video Studio
+
+In Video Studio:
+
+- The image well accepts up to 9 images.
+- The video well accepts up to 3 videos.
+- The audio well accepts up to 3 audio clips.
+
+For general reference, put character images, motion videos, and voice audio in the matching wells, then choose **General reference**. To animate a single still, add one image and use **First & last frame**.
+
+## Mode details
+
+### Text-to-video
+
+Write a prompt and attach no images, videos, or audio. Duration, resolution, and a concrete aspect ratio are sent to the model. Text-to-video requires an explicit ratio such as `16:9`; do not rely on Auto.
+
+You can include camera language in the prompt, such as a slow push-in, a locked-off shot, or a character entering from the left.
+
+### First and last frames
+
+- One image becomes the frame at 0.00 seconds; the rest of the clip plays forward from that still.
+- Two images: the first is the opening, the second is the ending, and the model fills the path between them.
+- With images attached, output ratio follows the stills and the on-screen ratio is ignored.
+
+Use this for storyboards, character keys, or opening/closing frames. Do not add reference videos or audio in this mode.
+
+### General reference
+
+Use this to keep a character, scene, motion, camera language, or voice consistent. It does not make a still the first or last frame unless the prompt says so.
+
+Typical combinations:
+
+- One or more character images: lock appearance, costume, and style.
+- Character images plus a motion video: appearance from the images, motion, camera, or cut rhythm from the video.
+- Images plus video plus audio: also lock speaking or singing timbre.
+- Video only: continue motion, camera, or the source clip’s structure.
+
+Audio cannot be the only reference. You must also attach at least one image or one video.
+
+State what to keep and what to change:
+
+```text
+Keep the person’s appearance from Image 1, including hair and outfit.
+Follow the street-dance rhythm and camera from Video 1; do not slow it down.
+Speak in English, using the timbre from Audio 1.
+Move the scene to a night city overpass; keep a cinematic look.
+```
+
+Do not treat general-reference images as first/last frames unless the prompt explicitly says to use Image 1 as the opening frame.
+
+## How settings map
+
+| UI | MiniMax H3 | MiniMax H3 Max |
+| --- | --- | --- |
+| Model name | `MiniMax-H3` | Name contains `h3-max` |
+| 720p | `768P` | `768P` |
+| 1080p | `2K` | 2K is not supported; the gateway may fall back |
+| Duration | Sent as 4–15 seconds | Sent as 5–15 seconds |
+| Text-to-video ratio | The concrete ratio you picked | Same |
+| First/last or general-reference ratio | `adaptive` | Same |
+
+The duration slider can go to 30 seconds, but H3 is clamped to the range above. For 2K, choose 1080p or higher and confirm the model is `MiniMax-H3`, not Max.
+
+## Asset limits
+
+These limits come from H3. The gateway returns a parameter error if they are exceeded.
+
+| Asset | Count | Format | Size / duration | Picture |
+| --- | --- | --- | --- | --- |
+| Images | Up to 9 | JPG, JPEG, PNG, WEBP, HEIC, HEIF | ≤ 30 MB each | 256–5760 px on each side; aspect ratio about 2:5 to 5:2 |
+| Videos | Up to 3 | MP4, MOV (H.264 / H.265) | ≤ 50 MB each; 2–15 s each; 15 s total | 256–5760 px; aspect ratio about 2:5 to 5:2 |
+| Audio | Up to 3 | MP3, WAV | ≤ 15 MB each; 2–15 s each; 15 s total | — |
+| Combined | Images + videos + audio ≤ 12 | — | Prompt ≤ 7000 characters | — |
+
+Video Studio rejects obvious audio duration and size problems on drop. On the canvas, use populated local nodes that already preview, not empty or broken files.
+
+## Troubleshooting
+
+**General reference says nothing is connected.**
+Check the generation-config or Video Studio preview. The current generation node needs a connected image or video; text alone is not enough. Group children must also contain media.
+
+**Images and videos are connected, but the request still looks like text-to-video.**
+Connect from the asset toward the generation node, and confirm those nodes appear in the prompt or reference bar. If a refresh keeps the media on the node but drops it from the request, reconnect them or add them from the reference bar.
+
+**Only a voice track is attached.**
+H3 does not accept audio-only general reference. Add a character image or a reference video.
+
+**A third image was added in first-and-last-frame mode.**
+More than two images become general reference. Those stills are no longer strict opening and ending frames.
+
+**The output ratio does not match the setting.**
+With images or videos attached, H3 adapts to the assets. To force `16:9`, use text-to-video, or describe the desired framing in a general-reference prompt.
+
+**Generation takes a long time.**
+H3 is asynchronous. Infinite Canvas stores the task ID on the video node and keeps polling after a refresh. You can also click **Get task status**.

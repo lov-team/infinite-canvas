@@ -11,6 +11,7 @@
 ## 操作手册
 
 - [画布节点操作手册](/zh-CN/docs/canvas/canvas-node-manual)
+- [MiniMax H3 视频生成](/zh-CN/docs/canvas/minimax-h3-video)
 - [画布快捷键](/zh-CN/docs/canvas/canvas-shortcuts)
 
 ## 开发与数据

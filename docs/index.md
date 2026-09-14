@@ -11,6 +11,7 @@
 ## Canvas Guide
 
 - [Canvas Node Guide](/docs/canvas/canvas-node-manual)
+- [MiniMax H3 Video](/docs/canvas/minimax-h3-video)
 - [Canvas Shortcuts](/docs/canvas/canvas-shortcuts)
 
 ## Development and Data
