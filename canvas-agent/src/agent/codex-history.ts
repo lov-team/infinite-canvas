@@ -537,6 +537,8 @@ function toolHistorySummary(tool: string, item: unknown, input: unknown) {
         const connections = arrayValue(field(result, "connections"));
         return Array.isArray(field(result, "nodes")) || Array.isArray(field(result, "connections")) ? canvasContentSummary(nodes, connections.length) : "已读取当前画布内容";
     }
+    if (tool === "editor_get_state") return "已读取剪辑时间线";
+    if (tool === "canvas_set_workspace_mode") return String(field(input, "mode")) === "edit" ? "已切换到剪辑模式" : "已切换到画布模式";
     if (tool === "canvas_get_selection") return "已读取当前选中内容";
     if (tool === "prompts_search") return `找到 ${numberValue(field(result, "total"))} 条提示词`;
     if (tool === "assets_list") return `共 ${numberValue(field(result, "total"))} 个资产`;
@@ -592,6 +594,7 @@ function toolInputRows(tool: string, input: unknown) {
     if (tool === "prompts_search") return [textRow("搜索内容", field(input, "query"))].filter(Boolean);
     if (tool === "canvas_create_text_node") return [textRow("文本内容", field(input, "text"))].filter(Boolean);
     if (tool === "canvas_apply_ops") return [textRow("操作内容", summarizeCanvasOps(arrayValue(field(input, "ops"))))].filter(Boolean);
+    if (tool === "editor_apply_ops") return [textRow("操作内容", summarizeCanvasOps(arrayValue(field(input, "ops"))))].filter(Boolean);
     if (tool === "canvas_create_attachment_nodes") return [textRow("图片数量", arrayValue(field(input, "attachmentIds")).length)].filter(Boolean);
     return [];
 }
@@ -614,6 +617,13 @@ function canvasOpLabel(type: string) {
     if (type === "set_viewport") return "调整视图";
     if (type === "select_nodes") return "选择节点";
     if (type === "run_generation") return "触发生成";
+    if (type === "add_clip") return "加入时间线";
+    if (type === "move_clip") return "移动片段";
+    if (type === "split") return "分割";
+    if (type === "trim_left") return "裁左";
+    if (type === "trim_right") return "裁右";
+    if (type === "remove_clip") return "删除片段";
+    if (type === "set_selection") return "选择片段";
     return type;
 }
 
@@ -728,6 +738,9 @@ function toolName(name: string) {
     if (name === "canvas_select_nodes") return "选择节点";
     if (name === "canvas_set_viewport") return "调整视口";
     if (name === "canvas_run_generation") return "触发生成";
+    if (name === "canvas_set_workspace_mode") return "切换工作区";
+    if (name === "editor_get_state") return "读取剪辑器";
+    if (name === "editor_apply_ops") return "剪辑时间线";
     if (name === "workbench_image_get_config") return "生图配置";
     if (name === "workbench_image_generate") return "生图工作台生成";
     if (name === "workbench_video_get_config") return "视频配置";

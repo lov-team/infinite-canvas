@@ -20,7 +20,9 @@ import { useAgentSkillStore } from "@/stores/use-agent-skill-store";
 import { useShallow } from "zustand/react/shallow";
 import { useAgentStore, type AgentAttachment, type AgentBootstrapStatus, type AgentCanvasContext, type AgentCanvasReference, type AgentChatItem, type AgentConversationState, type AgentModel, type AgentPendingApproval, type AgentPendingToolCall, type AgentPermissionMode, type AgentReasoningEffort, type AgentThreadSummary } from "@/stores/use-agent-store";
 import { type CanvasAgentOp, type CanvasAgentSnapshot } from "@/lib/canvas/canvas-agent-ops";
+import { type CanvasEditorOp } from "@/lib/canvas/canvas-edit-ops";
 import { isSiteTool, runSiteTool } from "@/lib/agent/agent-site-tools";
+import { useCanvasEditStore } from "@/stores/canvas/use-canvas-edit-store";
 import { acknowledgeCodexHistory, activateAgentClient, AgentApiError, discoverAgentConfig, fetchAgentJson, interruptCodexTurn, postCodexApproval, postState, postToolResult } from "@/services/api/canvas-agent";
 import { AgentChatTimeline, AgentTaskProgress, AgentUsageBar } from "./agent-chat";
 import { AgentChatComposer } from "./agent-chat-composer";
@@ -837,6 +839,25 @@ export function LocalAgentPanel({ embedded, headless, autoConnect }: { embedded?
                 appliedOps = await attachmentNodeOps(endpoint, token, clientIdRef.current, payload.input?.nodes);
                 result = context.applyOps(appliedOps);
                 await postState(endpoint, token, clientIdRef.current, result as CanvasAgentSnapshot);
+            } else if (payload.name === "canvas_set_workspace_mode") {
+                const mode = payload.input?.mode === "edit" ? "edit" : "canvas";
+                useCanvasEditStore.getState().setMode(mode);
+                if (mode === "edit") await useCanvasEditStore.getState().waitReady();
+                result = { ok: true, workspaceMode: mode };
+                const snapshot = canvasContextRef.current?.snapshot;
+                if (snapshot) void postState(endpoint, token, clientIdRef.current, { ...snapshot, workspaceMode: mode });
+            } else if (payload.name === "editor_get_state") {
+                const store = useCanvasEditStore.getState();
+                if (store.mode !== "edit") {
+                    result = { workspaceMode: "canvas", editor: null };
+                } else {
+                    result = (await store.waitReady()).getState();
+                }
+            } else if (payload.name === "editor_apply_ops") {
+                const editor = await useCanvasEditStore.getState().applyOps((payload.input?.ops || []) as CanvasEditorOp[]);
+                result = editor;
+                const snapshot = canvasContextRef.current?.snapshot;
+                if (snapshot) void postState(endpoint, token, clientIdRef.current, { ...snapshot, workspaceMode: "edit", editor });
             } else {
                 const snapshot = canvasContextRef.current?.snapshot;
                 if (!snapshot) throw new Error(rt("openCanvasFirst"));

@@ -41,9 +41,11 @@ import { CanvasNodePromptPanel, type CanvasNodeGenerationMode } from "@/componen
 import { CanvasToolbar } from "@/components/canvas/canvas-toolbar";
 import { AssetPickerModal, type InsertAssetPayload } from "@/components/canvas/asset-picker-modal";
 import { CanvasSidePanel } from "@/components/canvas/canvas-side-panel";
+import { CanvasEditMode } from "@/components/canvas/canvas-edit-mode";
 import { CanvasZoomControls } from "@/components/canvas/canvas-zoom-controls";
 import { useAgentStore } from "@/stores/use-agent-store";
 import { useCanvasStore } from "@/stores/canvas/use-canvas-store";
+import { useCanvasEditStore } from "@/stores/canvas/use-canvas-edit-store";
 import { useAgentBridge } from "@/pages/canvas/hooks/use-agent-bridge";
 import { usePluginHost } from "@/pages/canvas/hooks/use-plugin-host";
 import { buildNodeMentionReferences, getGroupResourceNodes, isCanvasReferenceNode, type CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -211,6 +213,8 @@ function InfiniteCanvasPage() {
     const renameProject = useCanvasStore((state) => state.renameProject);
     const deleteProjects = useCanvasStore((state) => state.deleteProjects);
     const currentProject = useCanvasStore((state) => state.projects.find((project) => project.id === projectId));
+    const workspaceMode = useCanvasEditStore((state) => state.mode);
+    const setWorkspaceMode = useCanvasEditStore((state) => state.setMode);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const [nodes, setNodes] = useState<CanvasNodeData[]>([]);
     const [connections, setConnections] = useState<CanvasConnection[]>([]);
@@ -472,6 +476,8 @@ function InfiniteCanvasPage() {
         if (!projectLoaded || !["new", "recent", "choose"].includes(searchParams.get("mode") || "")) return;
         if (!searchParams.has("agentUrl") && !localAgentEnabled && !fragmentBootstrap) openAgentPanel();
     }, [fragmentBootstrap, localAgentEnabled, openAgentPanel, projectLoaded, searchParams]);
+
+    useEffect(() => () => useCanvasEditStore.getState().setMode("canvas"), []);
 
     useEffect(() => {
         if (!projectLoaded || applyingHistoryRef.current || historyPausedRef.current) return;
@@ -1534,6 +1540,7 @@ function InfiniteCanvasPage() {
         const handleKeyDown = (event: KeyboardEvent) => {
             const target = event.target instanceof Element ? event.target : null;
             if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLSelectElement || target?.closest("[contenteditable='true'],[data-canvas-no-zoom],[data-canvas-shortcuts-ignore]")) return;
+            if (useCanvasEditStore.getState().mode === "edit") return;
 
             const key = event.key.toLowerCase();
             const isModifierShortcut = event.metaKey || event.ctrlKey;
@@ -2977,12 +2984,31 @@ function InfiniteCanvasPage() {
                     },
                 ]);
                 setSelectedNodeIds(new Set([id]));
+                if (useCanvasEditStore.getState().mode === "edit") queueMicrotask(() => void useCanvasEditStore.getState().addFromNode(id));
             } else {
                 insertAssistantImage({ id: `asset-${Date.now()}`, prompt: payload.title, dataUrl: payload.dataUrl, storageKey: payload.storageKey });
             }
             setAssetPickerOpen(false);
         },
         [insertAssistantImage, insertAssistantText, screenToCanvas, size.height, size.width],
+    );
+
+    const handleEditUseNode = useCallback(
+        (node: CanvasNodeData) => {
+            if ((node.type === CanvasNodeType.Video || node.type === CanvasNodeType.Audio) && node.metadata?.content) {
+                void useCanvasEditStore.getState().addFromNode(node.id).then(
+                    (ok) => {
+                        message[ok ? "success" : "error"](t(ok ? "canvas.edit.clipAdded" : "canvas.edit.addFailed"));
+                    },
+                    () => {
+                        message.error(t("canvas.edit.addFailed"));
+                    },
+                );
+                return;
+            }
+            message.warning(t(node.type === CanvasNodeType.Image ? "canvas.edit.imageNotSupported" : "canvas.edit.mediaOnly"));
+        },
+        [message, t],
     );
 
     // Memoize every callback and render function passed to CanvasNode.
@@ -3079,7 +3105,7 @@ function InfiniteCanvasPage() {
 
     return (
         <main className="flex h-full min-h-0 overflow-hidden" style={{ background: theme.canvas.background, color: theme.node.text }}>
-            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} />
+            <CanvasSidePanel nodes={nodes} selectedNodeIds={selectedNodeIds} onFocusNode={focusNode} onPreviewNode={setPreviewNodeId} onInsertAsset={handleAssetInsert} onUseNode={workspaceMode === "edit" ? handleEditUseNode : undefined} />
             <section className="relative min-w-0 flex-1 overflow-hidden">
                 <CanvasTopBar
                     title={currentProject?.title || t("canvas.projectPage.untitledCanvas")}
@@ -3089,8 +3115,8 @@ function InfiniteCanvasPage() {
                     onStartTitleEditing={startTitleEditing}
                     onFinishTitleEditing={finishTitleEditing}
                     onCancelTitleEditing={() => setTitleEditing(false)}
-                    canUndo={historyState.canUndo}
-                    canRedo={historyState.canRedo}
+                    canUndo={workspaceMode === "edit" || historyState.canUndo}
+                    canRedo={workspaceMode === "edit" || historyState.canRedo}
                     onHome={() => navigate("/")}
                     onProjects={() => navigate("/canvas")}
                     onCreateProject={createAndOpenProject}
@@ -3098,13 +3124,17 @@ function InfiniteCanvasPage() {
                     onExportProject={exportCurrentProject}
                     onImportImage={() => handleUploadRequest()}
                     onOpenPlugins={() => setPluginManagerOpen(true)}
-                    onUndo={undoCanvas}
-                    onRedo={redoCanvas}
+                    onUndo={workspaceMode === "edit" ? () => useCanvasEditStore.getState().undo() : undoCanvas}
+                    onRedo={workspaceMode === "edit" ? () => useCanvasEditStore.getState().redo() : redoCanvas}
+                    workspaceMode={workspaceMode}
+                    onWorkspaceModeChange={setWorkspaceMode}
                     agentOpen={agentPanelOpen}
                     compactAgentStatus={{ connected: localAgentConnected, enabled: localAgentEnabled, activity: localAgentActivity }}
                     onToggleAgent={toggleAgentPanel}
                 />
 
+                {workspaceMode === "edit" ? <CanvasEditMode key={projectId} projectId={projectId} nodes={nodes} /> : (
+                <>
                 <InfiniteCanvas
                     containerRef={containerRef}
                     viewport={viewport}
@@ -3376,6 +3406,8 @@ function InfiniteCanvasPage() {
                 >
                     <p className="text-sm opacity-60">{t("canvas.projectPage.clearDescription")}</p>
                 </Modal>
+                </>
+                )}
 
                 <AssetPickerModal open={assetPickerOpen} onInsert={handleAssetInsert} onClose={() => setAssetPickerOpen(false)} />
             </section>

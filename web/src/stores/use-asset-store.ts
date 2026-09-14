@@ -87,8 +87,12 @@ export const useAssetStore = create<AssetStore>()(
             replaceAssets: (assets) => set({ assets }),
             cleanupImages: (extra) => {
                 window.setTimeout(async () => {
-                    const [{ useCanvasStore }, { getVideoEditorMediaReferences }] = await Promise.all([import("@/stores/canvas/use-canvas-store"), import("@/pages/video/edit/project-storage")]);
-                    const videoEditorMedia = await getVideoEditorMediaReferences();
+                    const [{ useCanvasStore }, { getVideoEditorMediaReferences }, { getCanvasEditMediaReferences }] = await Promise.all([
+                        import("@/stores/canvas/use-canvas-store"),
+                        import("@/pages/video/edit/project-storage"),
+                        import("@/lib/canvas/canvas-edit-storage"),
+                    ]);
+                    const videoEditorMedia = [...(await getVideoEditorMediaReferences()), ...(await getCanvasEditMediaReferences())];
                     await cleanupUnusedImages({ assets: get().assets, projects: useCanvasStore.getState().projects, extra });
                     await cleanupUnusedMedia({ assets: get().assets, projects: useCanvasStore.getState().projects, videoEditorMedia, extra });
                 }, 0);

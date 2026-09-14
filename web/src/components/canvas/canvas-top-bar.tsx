@@ -28,6 +28,8 @@ export function CanvasTopBar({
     onOpenPlugins,
     onUndo,
     onRedo,
+    workspaceMode,
+    onWorkspaceModeChange,
     agentOpen,
     compactAgentStatus,
     onToggleAgent,
@@ -50,6 +52,8 @@ export function CanvasTopBar({
     onOpenPlugins: () => void;
     onUndo: () => void;
     onRedo: () => void;
+    workspaceMode: "canvas" | "edit";
+    onWorkspaceModeChange: (mode: "canvas" | "edit") => void;
     agentOpen: boolean;
     compactAgentStatus: { connected: boolean; enabled: boolean; activity: string };
     onToggleAgent: () => void;
@@ -134,6 +138,24 @@ export function CanvasTopBar({
                                 {title}
                             </button>
                         )}
+                    </div>
+                    <div className="ml-1 flex items-center text-xs font-medium">
+                        <button
+                            type="button"
+                            className="rounded-md px-2 py-1 transition hover:bg-black/5 dark:hover:bg-white/10"
+                            style={workspaceMode === "canvas" ? { background: theme.toolbar.activeBg, color: theme.toolbar.activeText } : { color: theme.node.muted }}
+                            onClick={() => onWorkspaceModeChange("canvas")}
+                        >
+                            {t("canvas.workspace.canvas")}
+                        </button>
+                        <button
+                            type="button"
+                            className="rounded-md px-2 py-1 transition hover:bg-black/5 dark:hover:bg-white/10"
+                            style={workspaceMode === "edit" ? { background: theme.toolbar.activeBg, color: theme.toolbar.activeText } : { color: theme.node.muted }}
+                            onClick={() => onWorkspaceModeChange("edit")}
+                        >
+                            {t("canvas.workspace.edit")}
+                        </button>
                     </div>
                     <CompactAgentStatus status={compactAgentStatus} onClick={onToggleAgent} />
                 </div>

@@ -452,6 +452,10 @@ export class CanvasSession {
             const ids = new Set(this.canvasState?.selectedNodeIds || []);
             return { nodes: (this.canvasState?.nodes || []).filter((node) => ids.has(node.id)).map(compactNode) };
         }
+        if (name === "editor_get_state" || name === "editor_apply_ops" || name === "canvas_set_workspace_mode") {
+            if (!this.clients.size) throw new Error("当前没有已连接画布");
+            return await this.requestCanvasTool(name, input);
+        }
         if (name === "canvas_create_attachment_nodes") return await this.createAttachmentNodes(input as { attachmentIds: string[]; x?: number; y?: number; gap?: number; direction?: "row" | "column" });
         if (!this.clients.size) throw new Error("当前没有已连接画布");
         const request = buildCanvasToolRequest(name, input, this.canvasState);

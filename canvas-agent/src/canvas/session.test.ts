@@ -62,6 +62,21 @@ test("画布写操作只发送给当前激活网页", async (t) => {
     assert.deepEqual(await result, { ok: true });
 });
 
+test("剪辑工具会发给当前画布网页", async (t) => {
+    const session = new CanvasSession();
+    const first = connect(session, "first");
+    t.after(() => first.close());
+    session.updateState(snapshot("canvas-first"), "first");
+    session.activateClient("first");
+
+    const result = session.callTool("canvas_set_workspace_mode", { mode: "edit" });
+    const call = first.event("tool_call");
+    assert.equal(field(call, "name"), "canvas_set_workspace_mode");
+    assert.equal(field(field(call, "input"), "mode"), "edit");
+    session.resolveResult("first", { requestId: String(field(call, "requestId")), result: { ok: true, workspaceMode: "edit" } });
+    assert.deepEqual(await result, { ok: true, workspaceMode: "edit" });
+});
+
 test("当前 turn 的图片附件可在发起标签页画布创建图片节点", async (t) => {
     const session = new CanvasSession();
     const first = connect(session, "first");

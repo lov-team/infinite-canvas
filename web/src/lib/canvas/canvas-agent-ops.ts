@@ -21,6 +21,13 @@ export type CanvasAgentSnapshot = {
     connections: CanvasConnection[];
     selectedNodeIds: string[];
     viewport: ViewportTransform;
+    workspaceMode?: "canvas" | "edit";
+    editor?: {
+        sources: Array<{ id: string; name?: string; kind: string; duration?: number; nodeId?: string }>;
+        tracks: Array<{ id: string; kind: string; clips: Array<{ id: string; sourceId: string; in: number; out: number; start: number; speed?: number }> }>;
+        durationMs: number;
+        selection: string | null;
+    } | null;
 };
 
 export function summarizeCanvasAgentOps(ops?: CanvasAgentOp[]) {
