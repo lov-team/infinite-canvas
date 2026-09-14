@@ -310,7 +310,9 @@ function normalizeVideoSeconds(value: string) {
 }
 
 function resolveVideoMode(mode: string | undefined, imageCount: number) {
-    if (mode === "reference" || imageCount > 2) return "reference";
+    // Accept the explicit aliases used by external callers and older canvas
+    // nodes, while keeping the wire-level OpenAI-compatible value `reference`.
+    if (mode === "reference" || mode === "reference_to_video" || mode === "image_to_video" || imageCount > 2) return "reference";
     return "frames";
 }
 

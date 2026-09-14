@@ -92,6 +92,11 @@ export const defaultConfig: AiConfig = {
             models: [
                 { name: "gpt-image-2", capability: "image" },
                 { name: "grok-imagine-video", capability: "video" },
+                // MiniMax H3 uses the OpenAI-compatible /v1/videos contract.
+                // Keep both text-to-video and image-to-video SKUs selectable;
+                // the latter is useful when a canvas node has a reference image.
+                { name: "minimax-h3", capability: "video" },
+                { name: "h3-i2v", capability: "video" },
                 { name: "gpt-5.5", capability: "text" },
                 { name: "gpt-4o-mini-tts", capability: "audio" },
             ],
@@ -113,7 +118,7 @@ export const defaultConfig: AiConfig = {
     videoMode: "frames",
     systemPrompt: "",
     reasoningEffort: "auto",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
+    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::minimax-h3", "default::h3-i2v", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
     quality: "auto",
     size: "1:1",
     background: "",
@@ -146,7 +151,7 @@ type ConfigStore = {
     clearPromptContinue: () => void;
 };
 
-const VIDEO_KEYWORDS = ["video", "sora", "veo", "kling", "wan", "hailuo"];
+const VIDEO_KEYWORDS = ["video", "sora", "veo", "kling", "wan", "hailuo", "minimax", "h3"];
 
 export function boolConfig(value: string, fallback: boolean) {
     return value ? value === "true" : fallback;
@@ -269,7 +274,7 @@ export const useConfigStore = create<ConfigStore>()(
                         vquality: config.vquality || "720",
                         videoGenerateAudio: config.videoGenerateAudio || "true",
                         videoWatermark: config.videoWatermark || "false",
-                        videoMode: config.videoMode === "reference" ? "reference" : "frames",
+                        videoMode: ["reference", "reference_to_video", "image_to_video"].includes(config.videoMode || "") ? "reference" : "frames",
                         canvasImageCount: config.canvasImageCount || "3",
                         proxyEnabled: Boolean(config.proxyEnabled),
                         proxyUrl: config.proxyUrl || DEFAULT_LOCAL_PROXY_URL,
@@ -442,7 +447,14 @@ function normalizeChannels(config: AiConfig) {
             ...channel,
             id: channel.id || (index === 0 ? "default" : `channel-${index + 1}`),
             name: channel.name || (index === 0 ? i18n.t("config.channels.defaultName") : i18n.t("config.channels.indexedName", { index: index + 1 })),
-            models: normalizeChannelModels(channel.models),
+            // Migrate the built-in default channel so existing installations
+            // can select H3 without requiring a manual model re-entry.
+            models: normalizeChannelModels([
+                ...(channel.models || []),
+                ...((channel.id || (index === 0 ? "default" : `channel-${index + 1}`)) === "default"
+                    ? [{ name: "minimax-h3", capability: "video" as const }, { name: "h3-i2v", capability: "video" as const }]
+                    : []),
+            ]),
         }),
     );
     if (!channels.length) {
