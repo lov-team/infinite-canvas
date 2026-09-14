@@ -1,6 +1,6 @@
 {
   "name": "@basketikun/canvas-agent",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,7 +23,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
-    "@openai/codex": "0.146.0",
+    "@openai/codex": "0.154.0",
     "express": "^5.1.0",
     "gray-matter": "^4.0.3",
     "strip-ansi": "7.2.0",
