@@ -45,9 +45,10 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
         // when the composer text only contains the prompt-text token. Keep the
         // persisted media references in the actual request as well; otherwise
         // H3 reference-to-video is misclassified as a no-reference request.
-        const referenceNodeIds = Array.isArray(sourceNode.metadata?.referenceNodeIds) ? sourceNode.metadata.referenceNodeIds.filter((id): id is string => typeof id === "string") : [];
-        const mentionedNodeIds = new Set(Array.from(prompt.matchAll(/@\[node:([^\]]+)\]/g), (match) => match[1]));
-        const missingMediaIds = referenceNodeIds.filter((id) => !mentionedNodeIds.has(id) && inputs.some((input) => input.nodeId === id && input.type !== "text"));
+        const persistedReferences = sourceNode.metadata as CanvasNodeData["metadata"] & { referenceNodeIds?: unknown };
+        const referenceNodeIds = Array.isArray(persistedReferences.referenceNodeIds) ? persistedReferences.referenceNodeIds.filter((id: unknown): id is string => typeof id === "string") : [];
+        const mentionedNodeIds = new Set<string>(Array.from(prompt.matchAll(/@\[node:([^\]]+)\]/g), (match) => match[1]));
+        const missingMediaIds = referenceNodeIds.filter((id: string) => !mentionedNodeIds.has(id) && inputs.some((input) => input.nodeId === id && input.type !== "text"));
         const composerPrompt = missingMediaIds.length ? `${prompt.trim()}\n\n${missingMediaIds.map((id) => `@[node:${id}]`).join(" ")}` : prompt;
         return buildComposerGenerationContext(inputs, composerPrompt);
     }
